@@ -16,7 +16,7 @@ var (
 )
 
 // SetupLogger initializes the slog logger with options from config.
-func SetupLogger(cfg config.LogConfig) {
+func SetupLogger(cfg config.LogConfig) *slog.Logger {
 	var level slog.Level
 	switch strings.ToLower(cfg.Level) {
 	case "debug":
@@ -37,6 +37,7 @@ func SetupLogger(cfg config.LogConfig) {
 	}
 	Logger = slog.New(handler)
 	slog.SetDefault(Logger)
+	return Logger
 }
 
 // SetLogger allows setting a custom slog.Logger instance.
