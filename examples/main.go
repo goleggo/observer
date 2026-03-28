@@ -40,14 +40,14 @@ func main() {
 	ctx := context.Background()
 
 	// Setup OTLP logger (OTLP HTTP)
-	logShutdown, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
+	provider, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
 	if err != nil {
 		log.SetupLogger(cfg.Log)
 		log.Error(ctx, "failed to setup OTLP logger", "error", err)
 		return
 	}
 	defer func() {
-		if err := logShutdown(ctx); err != nil {
+		if err := provider.Shutdown(ctx); err != nil {
 			log.Error(ctx, "failed to shutdown OTLP logger", "error", err)
 		}
 	}()

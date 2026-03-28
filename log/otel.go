@@ -15,7 +15,7 @@ import (
 	"github.com/goleggo/observer/config"
 )
 
-func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (func(context.Context) error, error) {
+func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (*sdklog.LoggerProvider, error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(otelCfg.ServiceName),
@@ -53,7 +53,7 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 	})
 	slog.SetDefault(Logger)
 
-	return provider.Shutdown, nil
+	return provider, nil
 }
 
 func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
