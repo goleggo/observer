@@ -2,6 +2,7 @@ package log
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -16,6 +17,10 @@ import (
 )
 
 func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (*sdklog.LoggerProvider, error) {
+	if otelCfg.ExporterType != "otlp" || otelCfg.Endpoint == "" {
+		return nil, fmt.Errorf("otel disabled or invalid endpoint")
+	}
+
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(otelCfg.ServiceName),
