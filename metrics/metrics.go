@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -14,12 +15,13 @@ import (
 	"github.com/goleggo/observer/config"
 )
 
-// SetupMetrics initializes metrics exporters and providers using OTLP or stdout.
 func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
 		),
+		resource.WithFromEnv(),
+		resource.WithAttributes(resourceAttrs(cfg.Resource)...),
 	)
 	if err != nil {
 		return err
@@ -53,4 +55,19 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
 	)
 	otel.SetMeterProvider(provider)
 	return nil
+}
+
+func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
+	if len(attrs) == 0 {
+		return nil
+	}
+
+	kv := make([]attribute.KeyValue, 0, len(attrs))
+	for key, value := range attrs {
+		if key == "" {
+			continue
+		}
+		kv = append(kv, attribute.String(key, value))
+	}
+	return kv
 }

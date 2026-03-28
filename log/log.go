@@ -15,19 +15,8 @@ var (
 	Logger *slog.Logger
 )
 
-// SetupLogger initializes the slog logger with options from config.
 func SetupLogger(cfg config.LogConfig) *slog.Logger {
-	var level slog.Level
-	switch strings.ToLower(cfg.Level) {
-	case "debug":
-		level = slog.LevelDebug
-	case "error":
-		level = slog.LevelError
-	case "info":
-		fallthrough
-	default:
-		level = slog.LevelInfo
-	}
+	level := parseLevel(cfg.Level)
 
 	var handler slog.Handler
 	if strings.ToLower(cfg.Format) == "json" {
@@ -40,26 +29,36 @@ func SetupLogger(cfg config.LogConfig) *slog.Logger {
 	return Logger
 }
 
-// SetLogger allows setting a custom slog.Logger instance.
+func parseLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "warn":
+		return slog.LevelWarn
+	case "debug":
+		return slog.LevelDebug
+	case "error":
+		return slog.LevelError
+	case "info":
+		fallthrough
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func SetLogger(l *slog.Logger) {
 	Logger = l
 }
 
-// Info logs an info message with optional trace/span context.
 func Info(ctx context.Context, msg string, args ...any) {
 	Logger.Info(msg, append(args, traceAttrs(ctx)...)...)
 }
 
-// Error logs an error message with optional trace/span context.
 func Error(ctx context.Context, msg string, args ...any) {
-	// Check if any argument is an error and add stack trace if present
 	var newArgs []any
 	for i := 0; i < len(args); i += 2 {
 		if i+1 < len(args) {
 			key, val := args[i], args[i+1]
 			if err, ok := val.(error); ok {
 				newArgs = append(newArgs, key, err)
-				// Add stack trace if available (for wrapped errors)
 				if st := getStackTrace(err); st != "" {
 					newArgs = append(newArgs, "stacktrace", st)
 				}
@@ -71,12 +70,10 @@ func Error(ctx context.Context, msg string, args ...any) {
 	Logger.Error(msg, append(newArgs, traceAttrs(ctx)...)...)
 }
 
-// Debug logs a debug message with optional trace/span context.
 func Debug(ctx context.Context, msg string, args ...any) {
 	Logger.Debug(msg, append(args, traceAttrs(ctx)...)...)
 }
 
-// traceAttrs extracts trace and span IDs from context if present.
 func traceAttrs(ctx context.Context) []any {
 	span := trace.SpanFromContext(ctx)
 	if !span.SpanContext().IsValid() {
@@ -88,7 +85,6 @@ func traceAttrs(ctx context.Context) []any {
 	}
 }
 
-// getStackTrace tries to extract a stack trace from an error if available.
 func getStackTrace(err error) string {
 	type stackTracer interface {
 		StackTrace() string

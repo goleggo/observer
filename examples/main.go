@@ -14,6 +14,11 @@ import (
 )
 
 func main() {
+	// How to use:
+	// - Set OTEL_RESOURCE_ATTRIBUTES or cfg.OTEL.Resource for common attributes.
+	// - Logs use OTLP/HTTP (default collector port 4318).
+	// - Traces/metrics use OTLP/gRPC (default collector port 4317).
+	// - This example shares a single endpoint; adjust per your collector setup.
 	// Config for logging, tracing, and metrics
 	cfg := config.Config{
 		Log: config.LogConfig{
@@ -22,15 +27,30 @@ func main() {
 		},
 		OTEL: config.OTELConfig{
 			ServiceName:  "observer-example",
-			ExporterType: "stdout", // or "otlp"
-			Endpoint:     "localhost:4317",
+			ExporterType: "otlp", // or "stdout"
+			Endpoint:     "localhost:4318",
 			Insecure:     true,
+			Resource: map[string]string{
+				"deployment.environment": "dev",
+				"service.version":        "0.1.0",
+			},
 		},
 	}
 
-	// Setup logger
-	log.SetupLogger(cfg.Log)
 	ctx := context.Background()
+
+	// Setup OTLP logger (OTLP HTTP)
+	logShutdown, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
+	if err != nil {
+		log.SetupLogger(cfg.Log)
+		log.Error(ctx, "failed to setup OTLP logger", "error", err)
+		return
+	}
+	defer func() {
+		if err := logShutdown(ctx); err != nil {
+			log.Error(ctx, "failed to shutdown OTLP logger", "error", err)
+		}
+	}()
 
 	// Setup tracer
 	if err := trace.SetupTrace(ctx, cfg.OTEL); err != nil {

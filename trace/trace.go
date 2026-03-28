@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -14,12 +15,13 @@ import (
 	"github.com/goleggo/observer/config"
 )
 
-// SetupTrace initializes tracing exporters and providers using OTLP or stdout.
 func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
 		),
+		resource.WithFromEnv(),
+		resource.WithAttributes(resourceAttrs(cfg.Resource)...),
 	)
 	if err != nil {
 		return err
@@ -55,4 +57,19 @@ func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
 	)
 	otel.SetTracerProvider(tp)
 	return nil
+}
+
+func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
+	if len(attrs) == 0 {
+		return nil
+	}
+
+	kv := make([]attribute.KeyValue, 0, len(attrs))
+	for key, value := range attrs {
+		if key == "" {
+			continue
+		}
+		kv = append(kv, attribute.String(key, value))
+	}
+	return kv
 }

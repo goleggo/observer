@@ -12,6 +12,7 @@ type OTELConfig struct {
 	ExporterType string // e.g., "otlp", "stdout"
 	Endpoint     string // OTLP endpoint
 	Insecure     bool   // Allow insecure connection (for local testing)
+	Resource     map[string]string
 }
 
 // Config holds configuration for all observability components.
