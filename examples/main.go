@@ -53,13 +53,13 @@ func main() {
 	}()
 
 	// Setup tracer
-	if err := trace.SetupTrace(ctx, cfg.OTEL); err != nil {
+	if _, err := trace.SetupTrace(ctx, cfg.OTEL); err != nil {
 		log.Error(ctx, "failed to setup tracer", "error", err)
 		return
 	}
 
 	// Setup metrics
-	if err := metrics.SetupMetrics(ctx, cfg.OTEL); err != nil {
+	if _, err := metrics.SetupMetrics(ctx, cfg.OTEL); err != nil {
 		log.Error(ctx, "failed to setup metrics", "error", err)
 		return
 	}

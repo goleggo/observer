@@ -5,17 +5,16 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/goleggo/observer/config"
 )
 
-func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
+func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProvider, error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
@@ -24,7 +23,7 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
 		resource.WithAttributes(resourceAttrs(cfg.Resource)...),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var exporter metric.Exporter
@@ -32,20 +31,20 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
 	case "stdout":
 		exporter, err = stdoutmetric.New(stdoutmetric.WithPrettyPrint())
 		if err != nil {
-			return err
+			return nil, err
 		}
 	case "otlp":
 		fallthrough
 	default:
-		opts := []otlpmetricgrpc.Option{
-			otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
+		opts := []otlpmetrichttp.Option{
+			otlpmetrichttp.WithEndpoint(cfg.Endpoint),
 		}
 		if cfg.Insecure {
-			opts = append(opts, otlpmetricgrpc.WithTLSCredentials(insecure.NewCredentials()))
+			opts = append(opts, otlpmetrichttp.WithInsecure())
 		}
-		exporter, err = otlpmetricgrpc.New(ctx, opts...)
+		exporter, err = otlpmetrichttp.New(ctx, opts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -54,7 +53,7 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) error {
 		metric.WithResource(res),
 	)
 	otel.SetMeterProvider(provider)
-	return nil
+	return provider, nil
 }
 
 func resourceAttrs(attrs map[string]string) []attribute.KeyValue {

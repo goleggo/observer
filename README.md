@@ -4,8 +4,8 @@ Common observability library for Go services using OpenTelemetry (logs, metrics,
 
 This package provides:
 - OTLP HTTP logs via `slog` (through the OTEL log SDK bridge)
-- OTLP gRPC metrics exporter
-- OTLP gRPC trace exporter
+- OTLP HTTP metrics exporter
+- OTLP HTTP trace exporter
 - Convenience helpers for context-aware logging
 
 ## Install
@@ -96,8 +96,8 @@ type OTELConfig struct {
 ## Signals and exporters
 
 - Logs: OTLP HTTP via `log.SetupOTELLogger`
-- Traces: OTLP gRPC via `trace.SetupTrace`
-- Metrics: OTLP gRPC via `metrics.SetupMetrics`
+- Traces: OTLP HTTP via `trace.SetupTrace`
+- Metrics: OTLP HTTP via `metrics.SetupMetrics`
 
 Default OTEL Collector ports:
 - OTLP HTTP: `4318`
@@ -141,4 +141,4 @@ See `examples/main.go` for a runnable example.
 ## Notes
 
 - `SetupLogger` remains available for stdout-only logging.
-- Logs use OTLP/HTTP; traces and metrics use OTLP/gRPC.
+- All signals (logs, traces, metrics) use OTLP/HTTP.

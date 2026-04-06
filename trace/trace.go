@@ -5,17 +5,16 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/goleggo/observer/config"
 )
 
-func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
+func SetupTrace(ctx context.Context, cfg config.OTELConfig) (*trace.TracerProvider, error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
@@ -24,7 +23,7 @@ func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
 		resource.WithAttributes(resourceAttrs(cfg.Resource)...),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var exporter trace.SpanExporter
@@ -34,20 +33,20 @@ func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
 			stdouttrace.WithPrettyPrint(),
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	case "otlp":
 		fallthrough
 	default:
-		opts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(cfg.Endpoint),
+		opts := []otlptracehttp.Option{
+			otlptracehttp.WithEndpoint(cfg.Endpoint),
 		}
 		if cfg.Insecure {
-			opts = append(opts, otlptracegrpc.WithTLSCredentials(insecure.NewCredentials()))
+			opts = append(opts, otlptracehttp.WithInsecure())
 		}
-		exporter, err = otlptracegrpc.New(ctx, opts...)
+		exporter, err = otlptracehttp.New(ctx, opts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -56,7 +55,7 @@ func SetupTrace(ctx context.Context, cfg config.OTELConfig) error {
 		trace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
-	return nil
+	return tp, nil
 }
 
 func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
