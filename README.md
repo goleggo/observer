@@ -6,6 +6,7 @@ This package provides:
 - OTLP HTTP logs via `slog` (through the OTEL log SDK bridge)
 - OTLP HTTP metrics exporter
 - OTLP HTTP trace exporter
+- gRPC server and client instrumentation (via OpenTelemetry stats handlers)
 - Convenience helpers for context-aware logging
 
 ## Install
@@ -134,6 +135,34 @@ log.Info(ctx, "order created", "order_id", id)
 log.Error(ctx, "payment failed", "error", err)
 ```
 
+## gRPC instrumentation
+
+The `grpc/server` and `grpc/client` packages provide OpenTelemetry stats handlers that automatically instrument all RPCs with traces and metrics. Logs with trace/span IDs work automatically via context propagation.
+
+### Server
+
+```go
+import (
+	grpcserver "github.com/goleggo/observer/grpc/server"
+	"google.golang.org/grpc"
+)
+
+srv := grpc.NewServer(grpcserver.StatsHandler()...)
+```
+
+### Client
+
+```go
+import (
+	grpcclient "github.com/goleggo/observer/grpc/client"
+	"google.golang.org/grpc"
+)
+
+conn, err := grpc.NewClient("localhost:50051", grpcclient.StatsHandler()...)
+```
+
+Make sure you call `trace.SetupTrace`, `metrics.SetupMetrics`, and `log.SetupOTELLogger` before creating the gRPC server or client so the global providers are registered.
+
 ## Examples
 
 See `examples/main.go` for a runnable example.
@@ -142,3 +171,4 @@ See `examples/main.go` for a runnable example.
 
 - `SetupLogger` remains available for stdout-only logging.
 - All signals (logs, traces, metrics) use OTLP/HTTP.
+- gRPC instrumentation uses the stats handler API (`otelgrpc`), which is the recommended approach over the deprecated interceptor API.

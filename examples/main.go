@@ -16,9 +16,8 @@ import (
 func main() {
 	// How to use:
 	// - Set OTEL_RESOURCE_ATTRIBUTES or cfg.OTEL.Resource for common attributes.
-	// - Logs use OTLP/HTTP (default collector port 4318).
-	// - Traces/metrics use OTLP/gRPC (default collector port 4317).
-	// - This example shares a single endpoint; adjust per your collector setup.
+	// - All signals (logs, traces, metrics) use OTLP/HTTP (default collector port 4318).
+	// - Use grpc/server and grpc/client packages to instrument gRPC handlers.
 	// Config for logging, tracing, and metrics
 	cfg := config.Config{
 		Log: config.LogConfig{
