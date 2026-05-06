@@ -7,7 +7,7 @@ This package provides:
 - OTLP HTTP metrics exporter
 - OTLP HTTP trace exporter
 - gRPC server and client instrumentation (via OpenTelemetry stats handlers)
-- Convenience helpers for context-aware logging
+- Performance-optimized `slog` handlers for trace context and automatic error stack traces
 
 ## Install
 
@@ -37,34 +37,37 @@ func main() {
 		},
 		OTEL: config.OTELConfig{
 			ServiceName:  "orders-api",
-			ExporterType: "otlp",
+			ExporterType: "otlp", // Default for all signals
 			Endpoint:     "localhost:4318",
 			Insecure:     true,
 			Resource: map[string]string{
 				"deployment.environment": "dev",
-				"service.version":        "0.1.0",
 			},
+			// Granular control (optional)
+			DisableMetrics: true, // Silence metrics in dev
 		},
 	}
 
 	ctx := context.Background()
 
-	logShutdown, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
-	if err != nil {
-		log.SetupLogger(cfg.Log)
-		log.Error(ctx, "failed to setup OTLP logger", "error", err)
-		return
-	}
-	defer logShutdown(ctx)
-
-	if err := trace.SetupTrace(ctx, cfg.OTEL); err != nil {
-		log.Error(ctx, "failed to setup tracer", "error", err)
-		return
+	// 1. Setup Logging (OTEL or Standard)
+	logProvider, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
+	if err != nil || logProvider == nil {
+		log.SetupLogger(cfg.Log) // Fallback to standard stdout logger
+	} else {
+		defer logProvider.Shutdown(ctx)
 	}
 
-	if err := metrics.SetupMetrics(ctx, cfg.OTEL); err != nil {
-		log.Error(ctx, "failed to setup metrics", "error", err)
-		return
+	// 2. Setup Traces
+	traceProvider, err := trace.SetupTrace(ctx, cfg.OTEL)
+	if err == nil && traceProvider != nil {
+		defer traceProvider.Shutdown(ctx)
+	}
+
+	// 3. Setup Metrics
+	meterProvider, err := metrics.SetupMetrics(ctx, cfg.OTEL)
+	if err == nil && meterProvider != nil {
+		defer meterProvider.Shutdown(ctx)
 	}
 
 	log.Info(ctx, "service started")
@@ -87,88 +90,62 @@ type LogConfig struct {
 ```go
 type OTELConfig struct {
 	ServiceName  string
-	ExporterType string // otlp|stdout
+	ExporterType string // otlp|stdout|none (default for all signals)
 	Endpoint     string // OTLP endpoint
 	Insecure     bool   // Allow insecure connection
 	Resource     map[string]string
+
+	// Optional: granular control over signals
+	TracesExporter  string // overrides ExporterType for traces
+	MetricsExporter string // overrides ExporterType for metrics
+	LogsExporter    string // overrides ExporterType for logs
+
+	DisableTraces  bool
+	DisableMetrics bool
+	DisableLogs    bool
 }
 ```
+
+## Performance & Best Practices
+
+### Context-Aware Logging
+The `log` package is optimized for zero-allocations in the hot path. It uses `slog` handlers to automatically:
+1. Extract `trace_id` and `span_id` from `context.Context`.
+2. Detect `error` attributes and append stack traces automatically (if available via `github.com/pkg/errors` or similar).
+
+```go
+// Trace context and error stack traces are handled automatically
+log.Error(ctx, "database connection failed", "error", err)
+```
+
+### Granular Signal Control
+In local development, you might want to see logs but silence noisy traces or metrics. You can do this by setting `ExporterType: "none"` or using the `DisableX` flags in `OTELConfig`.
+
+### Provider Shutdown
+**Crucial:** Always shutdown the providers returned by the setup functions. Failing to do so can lead to memory leaks, lost telemetry data, or hanging background goroutines.
 
 ## Signals and exporters
 
-- Logs: OTLP HTTP via `log.SetupOTELLogger`
-- Traces: OTLP HTTP via `trace.SetupTrace`
-- Metrics: OTLP HTTP via `metrics.SetupMetrics`
+- Logs: `log.SetupOTELLogger`
+- Traces: `trace.SetupTrace`
+- Metrics: `metrics.SetupMetrics`
 
-Default OTEL Collector ports:
-- OTLP HTTP: `4318`
-- OTLP gRPC: `4317`
-
-If you want different endpoints per signal, create separate configs per call.
-
-## Resource attributes
-
-You can set resource attributes two ways:
-
-1) In code with `cfg.OTEL.Resource`:
-
-```go
-cfg.OTEL.Resource = map[string]string{
-	"deployment.environment": "prod",
-	"service.version":        "1.2.3",
-	"region":                 "ap-southeast-1",
-}
-```
-
-2) Through the environment (merged automatically):
-
-```bash
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,service.version=1.2.3,region=ap-southeast-1
-```
-
-## Logging helpers
-
-The `log` package wraps `slog` and adds trace/span IDs when present in the context.
-
-```go
-log.Info(ctx, "order created", "order_id", id)
-log.Error(ctx, "payment failed", "error", err)
-```
+All exporters support `otlp` (HTTP), `stdout` (for local debugging), and `none`.
 
 ## gRPC instrumentation
 
-The `grpc/server` and `grpc/client` packages provide OpenTelemetry stats handlers that automatically instrument all RPCs with traces and metrics. Logs with trace/span IDs work automatically via context propagation.
+The `grpc/server` and `grpc/client` packages provide OpenTelemetry stats handlers that automatically instrument all RPCs.
 
 ### Server
-
 ```go
-import (
-	grpcserver "github.com/goleggo/observer/grpc/server"
-	"google.golang.org/grpc"
-)
-
 srv := grpc.NewServer(grpcserver.StatsHandler()...)
 ```
 
 ### Client
-
 ```go
-import (
-	grpcclient "github.com/goleggo/observer/grpc/client"
-	"google.golang.org/grpc"
-)
-
 conn, err := grpc.NewClient("localhost:50051", grpcclient.StatsHandler()...)
 ```
 
-Make sure you call `trace.SetupTrace`, `metrics.SetupMetrics`, and `log.SetupOTELLogger` before creating the gRPC server or client so the global providers are registered.
-
 ## Examples
 
-See `examples/main.go` for a runnable example.
-
-## Notes
-
-- `SetupLogger` remains available for stdout-only logging.
-- All signals (logs, traces, metrics) use OTLP/HTTP.
-- gRPC instrumentation uses the stats handler API (`otelgrpc`), which is the recommended approach over the deprecated interceptor API.
+See `examples/main.go` for a complete, runnable example of the optimized setup.
