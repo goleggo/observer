@@ -2,23 +2,23 @@ package log
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	"github.com/goleggo/observer/config"
+	"github.com/goleggo/observer/internal/otelhelper"
 )
 
 func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (*sdklog.LoggerProvider, error) {
-	if otelCfg.ExporterType != "otlp" || otelCfg.Endpoint == "" {
-		return nil, fmt.Errorf("otel disabled or invalid endpoint")
+	if otelCfg.DisableLogs || otelhelper.GetExporterType(otelCfg.LogsExporter, otelCfg.ExporterType) == "none" {
+		return nil, nil
 	}
 
 	res, err := resource.New(ctx,
@@ -26,23 +26,35 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 			semconv.ServiceName(otelCfg.ServiceName),
 		),
 		resource.WithFromEnv(),
-		resource.WithAttributes(resourceAttrs(otelCfg.Resource)...),
+		resource.WithAttributes(otelhelper.ResourceAttrs(otelCfg.Resource)...),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	opts := []otlploghttp.Option{}
-	if otelCfg.Endpoint != "" {
-		opts = append(opts, otlploghttp.WithEndpoint(otelCfg.Endpoint))
-	}
-	if otelCfg.Insecure {
-		opts = append(opts, otlploghttp.WithInsecure())
-	}
+	var exporter sdklog.Exporter
+	exporterType := otelhelper.GetExporterType(otelCfg.LogsExporter, otelCfg.ExporterType)
 
-	exporter, err := otlploghttp.New(ctx, opts...)
-	if err != nil {
-		return nil, err
+	switch exporterType {
+	case "stdout":
+		exporter, err = stdoutlog.New()
+		if err != nil {
+			return nil, err
+		}
+	case "otlp":
+		fallthrough
+	default:
+		opts := []otlploghttp.Option{}
+		if otelCfg.Endpoint != "" {
+			opts = append(opts, otlploghttp.WithEndpoint(otelCfg.Endpoint))
+		}
+		if otelCfg.Insecure {
+			opts = append(opts, otlploghttp.WithInsecure())
+		}
+		exporter, err = otlploghttp.New(ctx, opts...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	provider := sdklog.NewLoggerProvider(
@@ -59,21 +71,6 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 	slog.SetDefault(Logger)
 
 	return provider, nil
-}
-
-func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
-	if len(attrs) == 0 {
-		return nil
-	}
-
-	kv := make([]attribute.KeyValue, 0, len(attrs))
-	for key, value := range attrs {
-		if key == "" {
-			continue
-		}
-		kv = append(kv, attribute.String(key, value))
-	}
-	return kv
 }
 
 type levelFilterHandler struct {

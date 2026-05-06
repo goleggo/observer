@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -12,22 +11,29 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	"github.com/goleggo/observer/config"
+	"github.com/goleggo/observer/internal/otelhelper"
 )
 
 func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProvider, error) {
+	if cfg.DisableMetrics || otelhelper.GetExporterType(cfg.MetricsExporter, cfg.ExporterType) == "none" {
+		return nil, nil
+	}
+
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
 		),
 		resource.WithFromEnv(),
-		resource.WithAttributes(resourceAttrs(cfg.Resource)...),
+		resource.WithAttributes(otelhelper.ResourceAttrs(cfg.Resource)...),
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	var exporter metric.Exporter
-	switch cfg.ExporterType {
+	exporterType := otelhelper.GetExporterType(cfg.MetricsExporter, cfg.ExporterType)
+
+	switch exporterType {
 	case "stdout":
 		exporter, err = stdoutmetric.New(stdoutmetric.WithPrettyPrint())
 		if err != nil {
@@ -54,19 +60,4 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProv
 	)
 	otel.SetMeterProvider(provider)
 	return provider, nil
-}
-
-func resourceAttrs(attrs map[string]string) []attribute.KeyValue {
-	if len(attrs) == 0 {
-		return nil
-	}
-
-	kv := make([]attribute.KeyValue, 0, len(attrs))
-	for key, value := range attrs {
-		if key == "" {
-			continue
-		}
-		kv = append(kv, attribute.String(key, value))
-	}
-	return kv
 }
