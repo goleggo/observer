@@ -132,6 +132,23 @@ In local development, you might want to see logs but silence noisy traces or met
 
 All exporters support `otlp` (HTTP), `stdout` (for local debugging), and `none`.
 
+## HTTP middleware
+
+The `middleware` package provides request/response logging for HTTP frameworks. Trace and span IDs are automatically included via context propagation.
+
+### Gin
+
+```go
+import (
+	observergin "github.com/goleggo/observer/middleware/gin"
+)
+
+router := gin.New()
+router.Use(observergin.Logger())
+```
+
+Each request logs: method, path, status, latency (ms), client IP, user agent, and errors (if any). Requests with status >= 500 are logged at error level.
+
 ## gRPC instrumentation
 
 The `grpc/server` and `grpc/client` packages provide OpenTelemetry stats handlers that automatically instrument all RPCs.
