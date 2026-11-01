@@ -65,7 +65,7 @@ func TestHandlerTracesAndLogsWithTheRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 
 	spans := rec.Ended()
 	if len(spans) != 1 {
@@ -95,7 +95,7 @@ func TestHandlerSkipsPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != http.StatusOK || len(rec.Ended()) != 0 || buf.Len() != 0 {
 		t.Fatalf("status %d, %d spans, log %q", res.StatusCode, len(rec.Ended()), buf.String())
 	}
@@ -110,7 +110,7 @@ func TestHandlerKeepsStreamingWorking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status %d: the write deadline did not reach the connection", res.StatusCode)
 	}

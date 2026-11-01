@@ -65,7 +65,7 @@ func TestResource(t *testing.T) {
 	}
 	got := map[string]string{}
 	for _, kv := range res.Attributes() {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 	for k, want := range map[string]string{"service.name": "svc", "deployment.environment": "cfg", "team": "queue", "telemetry.sdk.language": "go"} {
 		if got[k] != want {

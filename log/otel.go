@@ -6,9 +6,9 @@ import (
 	"os"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/goleggo/observer/config"
@@ -36,7 +36,7 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 		sdklog.WithResource(res),
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
 	)
-	global.SetLoggerProvider(provider)
+	otel.SetLoggerProvider(provider)
 
 	var h slog.Handler = levelFilterHandler{
 		handler: otelslog.NewHandler(otelCfg.ServiceName, otelslog.WithLoggerProvider(provider)),

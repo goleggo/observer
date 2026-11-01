@@ -26,10 +26,10 @@ type formatterErr struct{}
 func (formatterErr) Error() string { return "boom" }
 func (formatterErr) Format(s fmt.State, verb rune) {
 	if verb == 'v' && s.Flag('+') {
-		io.WriteString(s, "boom\nmain.f\n\tmain.go:1")
+		_, _ = io.WriteString(s, "boom\nmain.f\n\tmain.go:1")
 		return
 	}
-	io.WriteString(s, "boom")
+	_, _ = io.WriteString(s, "boom")
 }
 
 func newTestLogger(buf *bytes.Buffer) *slog.Logger {
@@ -132,6 +132,6 @@ func captureStdout(t *testing.T, f func()) string {
 	go func() { b, _ := io.ReadAll(r); done <- string(b) }()
 	defer func() { os.Stdout = old }()
 	f()
-	w.Close()
+	_ = w.Close()
 	return <-done
 }
