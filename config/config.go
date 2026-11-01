@@ -4,6 +4,8 @@ package config
 type LogConfig struct {
 	Level  string // e.g., "info", "debug", "error"
 	Format string // e.g., "text", "json"
+	// DisableConsole stops SetupOTELLogger from also writing to stdout.
+	DisableConsole bool
 }
 
 // OTELConfig holds configuration for OpenTelemetry exporters and resources.

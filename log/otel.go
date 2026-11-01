@@ -3,6 +3,7 @@ package log
 import (
 	"context"
 	"log/slog"
+	"os"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -14,7 +15,9 @@ import (
 	"github.com/goleggo/observer/internal/otelhelper"
 )
 
-// SetupOTELLogger sends slog records to an OTEL log exporter. It returns nil when logs are disabled.
+// SetupOTELLogger installs a slog default that sends records to the OTEL log exporter and, unless
+// logCfg.DisableConsole is set, to stdout as well, so logs survive a collector outage. It returns a nil provider when
+// OTEL logs are disabled; call SetupLogger then.
 func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (*sdklog.LoggerProvider, error) {
 	kind, err := otelhelper.ExporterType(otelCfg.LogsExporter, otelCfg.ExporterType)
 	if err != nil || otelCfg.DisableLogs || kind == otelhelper.ExporterNone {
@@ -35,12 +38,14 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 	)
 	global.SetLoggerProvider(provider)
 
-	handler := otelslog.NewHandler(otelCfg.ServiceName, otelslog.WithLoggerProvider(provider))
-	Logger = slog.New(levelFilterHandler{
-		handler: handler,
+	var h slog.Handler = levelFilterHandler{
+		handler: otelslog.NewHandler(otelCfg.ServiceName, otelslog.WithLoggerProvider(provider)),
 		min:     parseLevel(logCfg.Level),
-	})
-	slog.SetDefault(Logger)
+	}
+	if !logCfg.DisableConsole {
+		h = slog.NewMultiHandler(NewConsoleHandler(logCfg, os.Stdout), h)
+	}
+	slog.SetDefault(slog.New(withStackTrace(h)))
 
 	return provider, nil
 }
