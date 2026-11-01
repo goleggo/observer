@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"context"
+	"errors"
 
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -12,7 +14,8 @@ import (
 	"github.com/goleggo/observer/internal/otelhelper"
 )
 
-// SetupMetrics installs the global meter provider. It returns nil when metrics are disabled.
+// SetupMetrics installs the global meter provider and, unless cfg.DisableRuntimeMetrics is set, starts the Go runtime
+// metrics. It returns nil when metrics are disabled.
 func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProvider, error) {
 	kind, err := otelhelper.ExporterType(cfg.MetricsExporter, cfg.ExporterType)
 	if err != nil || cfg.DisableMetrics || kind == otelhelper.ExporterNone {
@@ -27,10 +30,19 @@ func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProv
 		return nil, err
 	}
 
+	var readerOpts []metric.PeriodicReaderOption
+	if cfg.MetricInterval > 0 {
+		readerOpts = append(readerOpts, metric.WithInterval(cfg.MetricInterval))
+	}
 	provider := metric.NewMeterProvider(
-		metric.WithReader(metric.NewPeriodicReader(exporter)),
+		metric.WithReader(metric.NewPeriodicReader(exporter, readerOpts...)),
 		metric.WithResource(res),
 	)
+	if !cfg.DisableRuntimeMetrics {
+		if err := runtime.Start(runtime.WithMeterProvider(provider)); err != nil {
+			return nil, errors.Join(err, provider.Shutdown(ctx))
+		}
+	}
 	otel.SetMeterProvider(provider)
 	return provider, nil
 }

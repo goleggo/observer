@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // LogConfig holds configuration for the logger.
 type LogConfig struct {
 	Level  string // e.g., "info", "debug", "error"
@@ -26,6 +28,11 @@ type OTELConfig struct {
 	// SampleRatio keeps that share of new traces (0 < r <= 1) and follows the parent's decision otherwise.
 	// 0 leaves the choice to OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG, which default to sampling everything.
 	SampleRatio float64
+
+	// MetricInterval is how often metrics are exported. 0 uses OTEL_METRIC_EXPORT_INTERVAL, or 60s.
+	MetricInterval time.Duration
+	// DisableRuntimeMetrics turns off the Go runtime metrics (memory, GC, goroutines) recorded with metrics.
+	DisableRuntimeMetrics bool
 
 	DisableTraces  bool
 	DisableMetrics bool
