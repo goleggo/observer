@@ -9,52 +9,24 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	"github.com/goleggo/observer/config"
 	"github.com/goleggo/observer/internal/otelhelper"
 )
 
+// SetupOTELLogger sends slog records to an OTEL log exporter. It returns nil when logs are disabled.
 func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg config.OTELConfig) (*sdklog.LoggerProvider, error) {
-	if otelCfg.DisableLogs || otelhelper.GetExporterType(otelCfg.LogsExporter, otelCfg.ExporterType) == "none" {
-		return nil, nil
+	kind, err := otelhelper.ExporterType(otelCfg.LogsExporter, otelCfg.ExporterType)
+	if err != nil || otelCfg.DisableLogs || kind == otelhelper.ExporterNone {
+		return nil, err
 	}
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(otelCfg.ServiceName),
-		),
-		resource.WithFromEnv(),
-		resource.WithAttributes(otelhelper.ResourceAttrs(otelCfg.Resource)...),
-	)
+	res, err := otelhelper.Resource(ctx, otelCfg)
 	if err != nil {
 		return nil, err
 	}
-
-	var exporter sdklog.Exporter
-	exporterType := otelhelper.GetExporterType(otelCfg.LogsExporter, otelCfg.ExporterType)
-
-	switch exporterType {
-	case "stdout":
-		exporter, err = stdoutlog.New()
-		if err != nil {
-			return nil, err
-		}
-	case "otlp":
-		fallthrough
-	default:
-		opts := []otlploghttp.Option{}
-		if otelCfg.Endpoint != "" {
-			opts = append(opts, otlploghttp.WithEndpoint(otelCfg.Endpoint))
-		}
-		if otelCfg.Insecure {
-			opts = append(opts, otlploghttp.WithInsecure())
-		}
-		exporter, err = otlploghttp.New(ctx, opts...)
-		if err != nil {
-			return nil, err
-		}
+	exporter, err := newExporter(ctx, kind, otelCfg)
+	if err != nil {
+		return nil, err
 	}
 
 	provider := sdklog.NewLoggerProvider(
@@ -71,6 +43,27 @@ func SetupOTELLogger(ctx context.Context, logCfg config.LogConfig, otelCfg confi
 	slog.SetDefault(Logger)
 
 	return provider, nil
+}
+
+func newExporter(ctx context.Context, kind string, cfg config.OTELConfig) (sdklog.Exporter, error) {
+	if kind == otelhelper.ExporterStdout {
+		return stdoutlog.New()
+	}
+	ep, err := otelhelper.ParseEndpoint(cfg.Endpoint, cfg.Insecure, "/v1/logs")
+	if err != nil {
+		return nil, err
+	}
+	var opts []otlploghttp.Option
+	if ep.IsSet() {
+		opts = append(opts, otlploghttp.WithEndpoint(ep.Host))
+	}
+	if ep.Path != "" {
+		opts = append(opts, otlploghttp.WithURLPath(ep.Path))
+	}
+	if ep.Insecure {
+		opts = append(opts, otlploghttp.WithInsecure())
+	}
+	return otlploghttp.New(ctx, opts...)
 }
 
 type levelFilterHandler struct {
