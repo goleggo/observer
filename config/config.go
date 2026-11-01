@@ -21,6 +21,10 @@ type OTELConfig struct {
 	MetricsExporter string // overrides ExporterType for metrics
 	LogsExporter    string // overrides ExporterType for logs
 
+	// SampleRatio keeps that share of new traces (0 < r <= 1) and follows the parent's decision otherwise.
+	// 0 leaves the choice to OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG, which default to sampling everything.
+	SampleRatio float64
+
 	DisableTraces  bool
 	DisableMetrics bool
 	DisableLogs    bool
