@@ -2,104 +2,64 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
 	"time"
 
-	"github.com/goleggo/observer/config"
-	"github.com/goleggo/observer/log"
-	"github.com/goleggo/observer/metrics"
-	"github.com/goleggo/observer/trace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/goleggo/observer"
+	"github.com/goleggo/observer/config"
+	"github.com/goleggo/observer/log"
+	"github.com/goleggo/observer/middleware/nethttp"
 )
 
 func main() {
-	// How to use:
-	// - Set OTEL_RESOURCE_ATTRIBUTES or cfg.OTEL.Resource for common attributes.
-	// - All signals (logs, traces, metrics) use OTLP/HTTP (default collector port 4318).
-	// - Use grpc/server and grpc/client packages to instrument gRPC handlers.
-	// Config for logging, tracing, and metrics
-	cfg := config.Config{
-		Log: config.LogConfig{
-			Level:  "debug",
-			Format: "text",
-		},
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	shutdown, err := observer.Setup(ctx, config.Config{
+		Log: config.LogConfig{Level: "debug", Format: "text"},
 		OTEL: config.OTELConfig{
 			ServiceName:  "observer-example",
-			ExporterType: "stdout", // can be "otlp", "stdout", or "none"
-			Endpoint:     "localhost:4318",
-			Insecure:     true,
-			Resource: map[string]string{
-				"deployment.environment": "dev",
-				"service.version":        "0.1.0",
-			},
-			// To handle noisy OTEL logs in dev, you can disable traces or metrics:
-			DisableTraces:  false,
-			DisableMetrics: false,
+			ExporterType: "stdout", // "otlp" sends to Endpoint (or OTEL_EXPORTER_OTLP_ENDPOINT)
+			Endpoint:     "http://localhost:4318",
+			SampleRatio:  1,
+			Resource:     map[string]string{"deployment.environment": "dev"},
 		},
-	}
-
-	ctx := context.Background()
-
-	// Setup OTLP/Stdout logger
-	logProvider, err := log.SetupOTELLogger(ctx, cfg.Log, cfg.OTEL)
+	})
 	if err != nil {
-		log.SetupLogger(cfg.Log)
-		log.Error(ctx, "failed to setup OTLP logger", "error", err)
-	} else if logProvider == nil {
-		// OTEL logs disabled, fallback to standard logger
-		log.SetupLogger(cfg.Log)
-		log.Info(ctx, "OTEL logs disabled, using standard logger")
-	} else {
-		defer func() {
-			if err := logProvider.Shutdown(ctx); err != nil {
-				log.Error(ctx, "failed to shutdown OTLP logger", "error", err)
-			}
-		}()
+		log.Error(ctx, "observer setup failed", "error", err)
+		os.Exit(1)
 	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdown(ctx); err != nil {
+			log.Error(ctx, "observer shutdown failed", "error", err)
+		}
+	}()
 
-	// Setup tracer
-	traceProvider, err := trace.SetupTrace(ctx, cfg.OTEL)
-	if err != nil {
-		log.Error(ctx, "failed to setup tracer", "error", err)
-	} else if traceProvider != nil {
-		defer func() {
-			if err := traceProvider.Shutdown(ctx); err != nil {
-				log.Error(ctx, "failed to shutdown tracer", "error", err)
-			}
-		}()
+	hits, _ := otel.Meter("observer-example").Int64Counter("example_hits")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /hello/{name}", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(r.Context(), 1, metric.WithAttributes(attribute.String("name", r.PathValue("name"))))
+		log.Info(r.Context(), "saying hello", "name", r.PathValue("name"))
+		_, _ = w.Write([]byte("hello " + r.PathValue("name") + "\n"))
+	})
+	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
+
+	srv := &http.Server{Addr: ":8080", Handler: nethttp.Handler(mux, nethttp.WithSkip("/healthz")), ReadHeaderTimeout: 2 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Shutdown(context.Background())
+	}()
+	log.Info(ctx, "listening on :8080; try curl localhost:8080/hello/world")
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		log.Error(ctx, "server failed", "error", err)
 	}
-
-	// Setup metrics
-	meterProvider, err := metrics.SetupMetrics(ctx, cfg.OTEL)
-	if err != nil {
-		log.Error(ctx, "failed to setup metrics", "error", err)
-	} else if meterProvider != nil {
-		defer func() {
-			if err := meterProvider.Shutdown(ctx); err != nil {
-				log.Error(ctx, "failed to shutdown metrics", "error", err)
-			}
-		}()
-	}
-
-	// Example span usage
-	tracer := otel.Tracer("observer-example")
-	ctx, span := tracer.Start(ctx, "example-operation")
-	defer span.End()
-
-	// Example metric usage
-	meter := otel.GetMeterProvider().Meter("observer-example")
-	counter, err := meter.Int64Counter("example_counter")
-	if err != nil {
-		log.Error(ctx, "failed to create counter", "error", err)
-	} else {
-		counter.Add(ctx, 1, metric.WithAttributes(attribute.String("key", "value")))
-		log.Info(ctx, "Incremented example_counter metric")
-	}
-
-	log.Info(ctx, "This is an info log with trace context")
-	log.Debug(ctx, "This is a debug log with trace context")
-	log.Error(ctx, "This is an error log with trace context")
-
-	time.Sleep(1 * time.Second) // Give time for exporter to flush
 }

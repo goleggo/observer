@@ -1,23 +1,38 @@
 package config
 
+import "time"
+
 // LogConfig holds configuration for the logger.
 type LogConfig struct {
 	Level  string // e.g., "info", "debug", "error"
 	Format string // e.g., "text", "json"
+	// DisableConsole stops SetupOTELLogger from also writing to stdout.
+	DisableConsole bool
 }
 
 // OTELConfig holds configuration for OpenTelemetry exporters and resources.
 type OTELConfig struct {
 	ServiceName  string
-	ExporterType string // Default exporter type: "otlp", "stdout", "none"
-	Endpoint     string // OTLP endpoint
-	Insecure     bool   // Allow insecure connection (for local testing)
-	Resource     map[string]string
+	ExporterType string // "otlp" (default), "stdout" or "none"; anything else is an error
+	// Endpoint is the OTLP/HTTP collector: "host:port" or a base URL ("https://collector:4318"). Empty uses the
+	// OTEL_EXPORTER_OTLP_ENDPOINT env. There is no gRPC exporter: point it at the collector's HTTP port (4318).
+	Endpoint string
+	Insecure bool // plain HTTP for a host:port endpoint; a URL's scheme decides on its own
+	Resource map[string]string
 
 	// Optional: granular control over signals
 	TracesExporter  string // overrides ExporterType for traces
 	MetricsExporter string // overrides ExporterType for metrics
 	LogsExporter    string // overrides ExporterType for logs
+
+	// SampleRatio keeps that share of new traces (0 < r <= 1) and follows the parent's decision otherwise.
+	// 0 leaves the choice to OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG, which default to sampling everything.
+	SampleRatio float64
+
+	// MetricInterval is how often metrics are exported. 0 uses OTEL_METRIC_EXPORT_INTERVAL, or 60s.
+	MetricInterval time.Duration
+	// DisableRuntimeMetrics turns off the Go runtime metrics (memory, GC, goroutines) recorded with metrics.
+	DisableRuntimeMetrics bool
 
 	DisableTraces  bool
 	DisableMetrics bool

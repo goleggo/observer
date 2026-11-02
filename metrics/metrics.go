@@ -2,62 +2,68 @@ package metrics
 
 import (
 	"context"
+	"errors"
 
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	"github.com/goleggo/observer/config"
 	"github.com/goleggo/observer/internal/otelhelper"
 )
 
+// SetupMetrics installs the global meter provider and, unless cfg.DisableRuntimeMetrics is set, starts the Go runtime
+// metrics. It returns nil when metrics are disabled.
 func SetupMetrics(ctx context.Context, cfg config.OTELConfig) (*metric.MeterProvider, error) {
-	if cfg.DisableMetrics || otelhelper.GetExporterType(cfg.MetricsExporter, cfg.ExporterType) == "none" {
-		return nil, nil
+	kind, err := otelhelper.ExporterType(cfg.MetricsExporter, cfg.ExporterType)
+	if err != nil || cfg.DisableMetrics || kind == otelhelper.ExporterNone {
+		return nil, err
 	}
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(cfg.ServiceName),
-		),
-		resource.WithFromEnv(),
-		resource.WithAttributes(otelhelper.ResourceAttrs(cfg.Resource)...),
-	)
+	res, err := otelhelper.Resource(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	exporter, err := newExporter(ctx, kind, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	var exporter metric.Exporter
-	exporterType := otelhelper.GetExporterType(cfg.MetricsExporter, cfg.ExporterType)
-
-	switch exporterType {
-	case "stdout":
-		exporter, err = stdoutmetric.New(stdoutmetric.WithPrettyPrint())
-		if err != nil {
-			return nil, err
-		}
-	case "otlp":
-		fallthrough
-	default:
-		opts := []otlpmetrichttp.Option{
-			otlpmetrichttp.WithEndpoint(cfg.Endpoint),
-		}
-		if cfg.Insecure {
-			opts = append(opts, otlpmetrichttp.WithInsecure())
-		}
-		exporter, err = otlpmetrichttp.New(ctx, opts...)
-		if err != nil {
-			return nil, err
-		}
+	var readerOpts []metric.PeriodicReaderOption
+	if cfg.MetricInterval > 0 {
+		readerOpts = append(readerOpts, metric.WithInterval(cfg.MetricInterval))
 	}
-
 	provider := metric.NewMeterProvider(
-		metric.WithReader(metric.NewPeriodicReader(exporter)),
+		metric.WithReader(metric.NewPeriodicReader(exporter, readerOpts...)),
 		metric.WithResource(res),
 	)
+	if !cfg.DisableRuntimeMetrics {
+		if err := runtime.Start(runtime.WithMeterProvider(provider)); err != nil {
+			return nil, errors.Join(err, provider.Shutdown(ctx))
+		}
+	}
 	otel.SetMeterProvider(provider)
 	return provider, nil
+}
+
+func newExporter(ctx context.Context, kind string, cfg config.OTELConfig) (metric.Exporter, error) {
+	if kind == otelhelper.ExporterStdout {
+		return stdoutmetric.New(stdoutmetric.WithPrettyPrint())
+	}
+	ep, err := otelhelper.ParseEndpoint(cfg.Endpoint, cfg.Insecure, "/v1/metrics")
+	if err != nil {
+		return nil, err
+	}
+	var opts []otlpmetrichttp.Option
+	if ep.IsSet() {
+		opts = append(opts, otlpmetrichttp.WithEndpoint(ep.Host))
+	}
+	if ep.Path != "" {
+		opts = append(opts, otlpmetrichttp.WithURLPath(ep.Path))
+	}
+	if ep.Insecure {
+		opts = append(opts, otlpmetrichttp.WithInsecure())
+	}
+	return otlpmetrichttp.New(ctx, opts...)
 }

@@ -19,6 +19,7 @@ func Logger() gin.HandlerFunc {
 		r := middleware.RequestLog{
 			Method:    c.Request.Method,
 			Path:      c.Request.URL.Path,
+			Route:     c.FullPath(),
 			Status:    c.Writer.Status(),
 			Latency:   time.Since(start),
 			ClientIP:  c.ClientIP(),

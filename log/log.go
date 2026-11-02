@@ -1,7 +1,12 @@
+// Package log sets slog up for a service. The helpers log through slog.Default, so a logger set by SetupLogger,
+// SetupOTELLogger or SetLogger is safe to swap while other goroutines log.
 package log
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -11,118 +16,128 @@ import (
 	"github.com/goleggo/observer/config"
 )
 
-var (
-	Logger = slog.Default()
-)
-
+// SetupLogger installs a stdout logger (text, or json when cfg.Format is "json") as slog's default.
 func SetupLogger(cfg config.LogConfig) *slog.Logger {
-	level := parseLevel(cfg.Level)
+	l := slog.New(withStackTrace(NewConsoleHandler(cfg, os.Stdout)))
+	slog.SetDefault(l)
+	return l
+}
 
-	var handler slog.Handler
-	if strings.ToLower(cfg.Format) == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+// NewConsoleHandler returns a text or json handler that adds trace_id and span_id from the context.
+func NewConsoleHandler(cfg config.LogConfig, w io.Writer) slog.Handler {
+	opts := &slog.HandlerOptions{Level: parseLevel(cfg.Level)}
+	var h slog.Handler = slog.NewTextHandler(w, opts)
+	if strings.EqualFold(cfg.Format, "json") {
+		h = slog.NewJSONHandler(w, opts)
 	}
-
-	// Wrap handler with performance-optimized middlewares
-	handler = &otelContextHandler{handler}
-	handler = &errorHandler{handler}
-
-	Logger = slog.New(handler)
-	slog.SetDefault(Logger)
-	return Logger
+	return otelContextHandler{h}
 }
 
 func parseLevel(level string) slog.Level {
 	switch strings.ToLower(level) {
-	case "warn":
-		return slog.LevelWarn
 	case "debug":
 		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
 	case "error":
 		return slog.LevelError
-	case "info":
-		fallthrough
-	default:
-		return slog.LevelInfo
 	}
+	return slog.LevelInfo
 }
 
-func SetLogger(l *slog.Logger) {
-	Logger = l
-}
-
-func Info(ctx context.Context, msg string, args ...any) {
-	Logger.InfoContext(ctx, msg, args...)
-}
-
-func Error(ctx context.Context, msg string, args ...any) {
-	Logger.ErrorContext(ctx, msg, args...)
-}
+// SetLogger installs l as slog's default.
+func SetLogger(l *slog.Logger) { slog.SetDefault(l) }
 
 func Debug(ctx context.Context, msg string, args ...any) {
-	Logger.DebugContext(ctx, msg, args...)
+	slog.Default().DebugContext(ctx, msg, args...)
+}
+func Info(ctx context.Context, msg string, args ...any) {
+	slog.Default().InfoContext(ctx, msg, args...)
+}
+func Warn(ctx context.Context, msg string, args ...any) {
+	slog.Default().WarnContext(ctx, msg, args...)
+}
+func Error(ctx context.Context, msg string, args ...any) {
+	slog.Default().ErrorContext(ctx, msg, args...)
 }
 
-// otelContextHandler extracts trace/span IDs from context and adds them to the log record.
 type otelContextHandler struct {
 	slog.Handler
 }
 
-func (h *otelContextHandler) Handle(ctx context.Context, r slog.Record) error {
-	span := trace.SpanFromContext(ctx)
-	if span.SpanContext().IsValid() {
+func (h otelContextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 		r.AddAttrs(
-			slog.String("trace_id", span.SpanContext().TraceID().String()),
-			slog.String("span_id", span.SpanContext().SpanID().String()),
+			slog.String("trace_id", sc.TraceID().String()),
+			slog.String("span_id", sc.SpanID().String()),
 		)
 	}
 	return h.Handler.Handle(ctx, r)
 }
 
-func (h *otelContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &otelContextHandler{h.Handler.WithAttrs(attrs)}
+func (h otelContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return otelContextHandler{h.Handler.WithAttrs(attrs)}
 }
 
-func (h *otelContextHandler) WithGroup(name string) slog.Handler {
-	return &otelContextHandler{h.Handler.WithGroup(name)}
+func (h otelContextHandler) WithGroup(name string) slog.Handler {
+	return otelContextHandler{h.Handler.WithGroup(name)}
 }
 
-// errorHandler automatically extracts stack traces from error attributes.
-type errorHandler struct {
+// StackTracer is the interface an error implements to put its stack trace in an error record.
+type StackTracer interface {
+	error
+	StackTrace() string
+}
+
+type formattedError interface {
+	error
+	fmt.Formatter
+}
+
+func withStackTrace(h slog.Handler) slog.Handler { return stackTraceHandler{h} }
+
+// stackTraceHandler adds a "stacktrace" attribute to error records from the first error attribute that carries one:
+// a StackTracer, or else an error that implements fmt.Formatter (github.com/pkg/errors,
+// github.com/cockroachdb/errors), rendered with %+v.
+type stackTraceHandler struct {
 	slog.Handler
 }
 
-func (h *errorHandler) Handle(ctx context.Context, r slog.Record) error {
-	if r.Level >= slog.LevelError {
-		r.Attrs(func(a slog.Attr) bool {
-			if err, ok := a.Value.Any().(error); ok {
-				if st := getStackTrace(err); st != "" {
-					r.AddAttrs(slog.String("stacktrace", st))
-					return false // stop after first error with stacktrace for performance
-				}
-			}
+func (h stackTraceHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Level < slog.LevelError {
+		return h.Handler.Handle(ctx, r)
+	}
+	var st string
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Value.Kind() != slog.KindAny {
 			return true
-		})
+		}
+		if err, ok := a.Value.Any().(error); ok {
+			st = stackTrace(err)
+		}
+		return st == ""
+	})
+	if st != "" {
+		r = r.Clone()
+		r.AddAttrs(slog.String("stacktrace", st))
 	}
 	return h.Handler.Handle(ctx, r)
 }
 
-func (h *errorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &errorHandler{h.Handler.WithAttrs(attrs)}
+func (h stackTraceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return stackTraceHandler{h.Handler.WithAttrs(attrs)}
 }
 
-func (h *errorHandler) WithGroup(name string) slog.Handler {
-	return &errorHandler{h.Handler.WithGroup(name)}
+func (h stackTraceHandler) WithGroup(name string) slog.Handler {
+	return stackTraceHandler{h.Handler.WithGroup(name)}
 }
 
-func getStackTrace(err error) string {
-	type stackTracer interface {
-		StackTrace() string
+func stackTrace(err error) string {
+	if st, ok := errors.AsType[StackTracer](err); ok {
+		return st.StackTrace()
 	}
-	if stErr, ok := err.(stackTracer); ok {
-		return stErr.StackTrace()
+	if f, ok := errors.AsType[formattedError](err); ok {
+		return fmt.Sprintf("%+v", f)
 	}
 	return ""
 }
